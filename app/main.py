@@ -147,6 +147,7 @@ def get_job(job_id: str) -> JobInfo:
 
 
 @app.get("/v1/jobs/{job_id}/markdown")
+@app.get("/v1/jobs/{job_id}/result.md")
 def download_markdown(job_id: str) -> FileResponse:
     meta = read_meta(job_id)
     if not meta:

@@ -106,10 +106,22 @@ curl http://127.0.0.1:8000/v1/jobs/<job_id>
 仅当 `status=done`：
 
 ```bash
+# 正确（推荐）
 curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/markdown
+
+# 下面这个路径也可以（兼容别名），不要拼成别的后缀
+curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/result.md
 ```
 
-会保存为类似 `WO2025050169A1_final.md` 的文件。结构式若置信度够高，会变成行内 SMILES（反引号包裹）；不够高的仍保留原图引用。
+保存下来的文件名一般是 `原名_final.md`（由响应头 `Content-Disposition` 决定）。
+
+若打开后只有一行 `{"detail":"Not Found"}`，说明 **URL 写错或 job_id 不存在**，并不是真正的结果文件。请先：
+
+```bash
+curl http://127.0.0.1:8000/v1/jobs/<job_id>
+```
+
+确认 `status` 为 `done` 后再下载。
 
 ### 3. 接口一览
 
@@ -118,7 +130,8 @@ curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/markdown
 | `GET` | `/health` | 存活检查 |
 | `POST` | `/v1/jobs` | 上传 PDF（`multipart/form-data`，字段名 `file`） |
 | `GET` | `/v1/jobs/{id}` | 查状态 / 统计 / 错误 |
-| `GET` | `/v1/jobs/{id}/markdown` | 下载结果 Markdown |
+| `GET` | `/v1/jobs/{id}/markdown` | 下载结果 Markdown（推荐） |
+| `GET` | `/v1/jobs/{id}/result.md` | 同上（兼容别名） |
 | `GET` | `/v1/jobs/{id}/images/{name}` | 可选：下载结果中保留的图片 |
 
 同一时间默认只跑 **1** 个任务（避免 GPU/CPU 抢占）。也可用浏览器打开 `/docs` 点「Try it out」完成上传与下载。
