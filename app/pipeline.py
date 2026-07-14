@@ -29,30 +29,70 @@ def _resolve_image(
     candidates.append(Path(rel_path))
     for c in candidates:
         if c.is_file():
-            return c
+            return c.resolve()
     return None
+
+
+def _index_predictions(
+    batch: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Index by basename so path string differences cannot drop matches."""
+    by_name: dict[str, dict[str, Any]] = {}
+    for item in batch:
+        raw = item.get("path") or ""
+        name = Path(raw).name
+        if name:
+            by_name[name] = item
+        # also keep id→ later if needed
+    return by_name
 
 
 def _replace_with_smiles(
     md_text: str,
     image_refs: list[tuple[str, str]],
     resolved: dict[tuple[str, str], Path | None],
-    predictions: dict[Path, dict[str, Any]],
-) -> tuple[str, int]:
+    predictions_by_name: dict[str, dict[str, Any]],
+) -> tuple[str, int, dict[str, int]]:
     threshold = settings.molscribe_confidence
     template = settings.smiles_template
     replaced = 0
+    counters = {
+        "pred_missing": 0,
+        "pred_error": 0,
+        "pred_no_smiles": 0,
+        "pred_low_conf": 0,
+        "pred_ok": 0,
+    }
 
     for alt, rel_path in image_refs:
         img_path = resolved.get((alt, rel_path))
-        pred = predictions.get(img_path) if img_path else None
+        name = Path(rel_path).name
+        pred = predictions_by_name.get(name) if name else None
+        if img_path is not None and pred is None:
+            # fallback: try resolved basename
+            pred = predictions_by_name.get(img_path.name)
+
         if not pred:
+            counters["pred_missing"] += 1
             continue
-        confidence = float(pred.get("confidence") or 0.0)
-        smiles = (pred.get("smiles") or "").strip()
-        if not smiles or confidence < threshold:
+        if pred.get("error"):
+            counters["pred_error"] += 1
+            logger.warning("MolScribe error for %s: %s", name, pred.get("error"))
             continue
 
+        confidence = float(pred.get("confidence") or 0.0)
+        smiles = (pred.get("smiles") or "").strip()
+        if not smiles:
+            counters["pred_no_smiles"] += 1
+            continue
+        if confidence < threshold:
+            counters["pred_low_conf"] += 1
+            logger.info(
+                "Skip %s: conf=%.3f < threshold=%.3f", name, confidence, threshold
+            )
+            continue
+
+        counters["pred_ok"] += 1
         smiles_text = template.format(smiles=smiles, confidence=confidence)
         if settings.keep_original_image:
             replacement = f"{smiles_text}\n\n![{alt}]({rel_path})"
@@ -65,7 +105,7 @@ def _replace_with_smiles(
             replaced += 1
             logger.info("Replaced %s → %s (conf=%.3f)", rel_path, smiles, confidence)
 
-    return md_text, replaced
+    return md_text, replaced, counters
 
 
 def process_pdf(pdf_path: Path, work_dir: Path) -> dict[str, Any]:
@@ -92,27 +132,32 @@ def process_pdf(pdf_path: Path, work_dir: Path) -> dict[str, Any]:
         resolved[(alt, rel)] = _resolve_image(rel, images_dir, intermediate_md.parent)
 
     valid_paths = [p for p in resolved.values() if p is not None]
-    # unique preserve order
     seen: set[Path] = set()
     unique_paths: list[Path] = []
     for p in valid_paths:
-        if p not in seen:
-            seen.add(p)
-            unique_paths.append(p)
+        rp = p.resolve()
+        if rp not in seen:
+            seen.add(rp)
+            unique_paths.append(rp)
 
-    predictions: dict[Path, dict[str, Any]] = {}
+    predictions_by_name: dict[str, dict[str, Any]] = {}
+    batch: list[dict[str, Any]] = []
     if unique_paths:
         logger.info("[3/4] MolScribe on %d images", len(unique_paths))
         pred_json = work_dir / "molscribe_predictions.json"
         batch = run_molscribe_batch(unique_paths, output_json=pred_json)
-        by_path = {Path(item["path"]): item for item in batch if "path" in item}
-        predictions = by_path
+        predictions_by_name = _index_predictions(batch)
+        logger.info(
+            "MolScribe returned %d rows, indexed %d basenames",
+            len(batch),
+            len(predictions_by_name),
+        )
     else:
         logger.info("[3/4] No images — skip MolScribe")
 
     logger.info("[4/4] Write final markdown")
-    final_text, replaced = _replace_with_smiles(
-        md_text, image_refs, resolved, predictions
+    final_text, replaced, counters = _replace_with_smiles(
+        md_text, image_refs, resolved, predictions_by_name
     )
 
     if images_dir and images_dir.is_dir():
@@ -123,12 +168,44 @@ def process_pdf(pdf_path: Path, work_dir: Path) -> dict[str, Any]:
 
     final_md_path.write_text(final_text, encoding="utf-8")
 
+    # Helpful one-liner for operators
+    hint = None
+    if len(image_refs) > 0 and replaced == 0:
+        if counters["pred_error"] > 0:
+            hint = (
+                "MolScribe ran but every/most predictions errored "
+                "(often albumentations version mismatch). "
+                "Inspect work/molscribe_predictions.json and pin albumentations==1.3.1."
+            )
+        elif counters["pred_missing"] == len(image_refs):
+            hint = "No MolScribe predictions matched image names — check worker output."
+        elif counters["pred_low_conf"] > 0:
+            hint = (
+                f"Predictions existed but all below MOLSCRIBE_CONFIDENCE="
+                f"{settings.molscribe_confidence}."
+            )
+        else:
+            hint = "Images kept; check molscribe_predictions.json and container logs."
+
     stats = {
         "images_found": len(image_refs),
         "images_resolved": len(unique_paths),
+        "molscribe_results": len(batch),
         "smiles_replaced": replaced,
+        "pred_missing": counters["pred_missing"],
+        "pred_error": counters["pred_error"],
+        "pred_no_smiles": counters["pred_no_smiles"],
+        "pred_low_conf": counters["pred_low_conf"],
+        "pred_ok": counters["pred_ok"],
+        "molscribe_confidence_threshold": settings.molscribe_confidence,
+        "hint": hint,
         "intermediate_md": str(intermediate_md),
         "final_md": str(final_md_path),
+        "predictions_json": str(work_dir / "molscribe_predictions.json")
+        if unique_paths
+        else None,
     }
+    if hint:
+        logger.warning("SMILES replace warning: %s", hint)
     logger.info("Done: %s", stats)
     return {"final_md": final_md_path, "stats": stats}

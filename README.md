@@ -187,17 +187,61 @@ $DATA_DIR/jobs/<job_id>/work/mineru/**/*.md    ← 中间稿
 2. 再用 **`.../markdown`** 下载（见上文）
 3. 检查文件大小：正常专利结果通常是 **几十～几百 KB**；只有几十字节几乎肯定是错误响应
 
-#### 坑 B：Markdown 里结构式还是图片，没有 SMILES
+#### 坑 B：`result.md` 里结构式还是 `![](images/...)`，没有 SMILES（最常见）
 
-可能原因：
+任务可以是 `done`，但 **MolScribe 一步其实失败了**——API 仍会写出 Markdown（只是没替换）。
 
-1. 打开了 MinerU 中间稿（`work/mineru/...`），不是 `result.md` / `*_final.md`
-2. 任务还在 `running` 就拷贝了中间文件
-3. 该图置信度低于阈值（默认 `MOLSCRIBE_CONFIDENCE=0.5`），会故意保留原图；看 `stats.smiles_replaced` 是否 > 0
+**先看状态里的统计（必查）：**
+
+```bash
+curl -s http://127.0.0.1:8000/v1/jobs/<job_id> | python3 -m json.tool
+```
+
+关注：
+
+| 字段 | 正常 | 有问题 |
+|------|------|--------|
+| `stats.smiles_replaced` | > 0（有结构式时） | **0** |
+| `stats.pred_error` | 0 或很小 | **很大 / 接近图片数** |
+| `stats.hint` | null | 会写明原因 |
+
+**再看预测明细文件（容器内）：**
+
+```text
+/data/jobs/<job_id>/work/molscribe_predictions.json
+```
+
+若几乎每条都有 `"error": "...pad_with_params..."` 或 `apply_to_keypoints`，就是 **albumentations 版本不对**。  
+本仓库要求 MolScribe 环境钉死：`albumentations==1.3.1`（见 `requirements-molscribe.txt`）。  
+只换“能 import 的 MolScribe 镜像”、却没钉 albumentations，仍会出现「任务成功、Markdown 全是图」。
+
+**修复后必须：**
+
+```bash
+# 改完 requirements-molscribe.txt / Dockerfile 后
+docker compose build --no-cache
+docker compose up -d
+# 重新上传 PDF，开新 job（旧 job 不会自动重跑）
+```
+
+其它可能：
+
+1. 打开了 `work/mineru/**/*.md` 中间稿，不是下载的 `*_final.md` / `result.md`
+2. `stats.pred_low_conf` 高：阈值太严，可临时设 `MOLSCRIBE_CONFIDENCE=0.3`
+3. `stats.molscribe_results=0`：MolScribe 子进程根本没跑起来，看容器日志
 
 #### 坑 C：不想记 URL → 用浏览器
 
 打开 http://127.0.0.1:8000/docs → `POST /v1/jobs` 上传 → `GET /v1/jobs/{job_id}` 看状态 → `GET /v1/jobs/{job_id}/markdown` 下载。
+
+#### 坑 D：如何确认 Docker 里的 MolScribe 真的可用
+
+```bash
+docker compose exec document-parser \
+  /opt/venvs/molscribe/bin/python -c "import albumentations.augmentations as aa; print('pad_with_params', hasattr(aa,'pad_with_params')); import molscribe; print('molscribe ok')"
+```
+
+必须打印 `pad_with_params True`。若是 `False`，不要再跑任务，先修依赖重建镜像。
 
 ---
 
