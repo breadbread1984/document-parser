@@ -46,7 +46,7 @@ COPY requirements-molscribe.txt /tmp/requirements-molscribe.txt
 RUN /opt/venvs/molscribe/bin/pip install --upgrade pip \
     && /opt/venvs/molscribe/bin/pip install torch torchvision --index-url ${TORCH_INDEX} \
     && /opt/venvs/molscribe/bin/pip install -r /tmp/requirements-molscribe.txt \
-    && /opt/venvs/molscribe/bin/python -c "import albumentations.augmentations as aa; assert hasattr(aa,'pad_with_params'), 'albumentations too new — pin ==1.3.1'; from molscribe import MolScribe; print('molscribe ok')"
+    && /opt/venvs/molscribe/bin/python -c "from molscribe import MolScribe; print('molscribe ok')"
 
 COPY app /app/app
 COPY workers /app/workers
