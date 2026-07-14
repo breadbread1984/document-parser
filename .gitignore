@@ -1,0 +1,7 @@
+# 忽略所有 __pycache__ 文件夹及其内容
+**/__pycache__/
+
+# 忽略所有的 .pyc, .pyo, .pyd 编译文件（推荐一起忽略）
+*.pyc
+*.pyo
+*.pyd
