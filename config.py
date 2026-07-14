@@ -90,6 +90,8 @@ class VLLMConfig:
             env["CUDA_VISIBLE_DEVICES"] = self.cuda_visible_devices
         if self.api_key is not None:
             env["OPENAI_API_KEY"] = self.api_key
+            # HttpVlmClient uses MINERU_VL_API_KEY, not OPENAI_API_KEY
+            env["MINERU_VL_API_KEY"] = self.api_key
         return env
 
     def to_cli_args(self) -> list[str]:
