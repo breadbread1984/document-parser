@@ -1,0 +1,2 @@
+# MinerU venv only
+mineru[all]>=3.0.0

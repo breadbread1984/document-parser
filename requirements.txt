@@ -1,13 +1,15 @@
-# MinerU - PDF document parsing
+# MinerU - PDF document parsing (pipeline backend; no vLLM required)
 mineru[all]>=3.0.0
 
-# vLLM - high-performance inference engine (recommended for VLM/hybrid backends)
-# Install with CUDA support matching your driver version
-vllm>=0.7.0
+# Optional: vLLM for VLM/hybrid backends (Linux+CUDA recommended; skip on Windows)
+# vllm>=0.7.0
 
 # MolScribe - chemical structure recognition (image -> SMILES)
 # Modified fork for enhanced compatibility
 git+https://github.com/breadbread1984/MolScribe.git
+# MolScribe still uses DualTransform.apply_to_keypoint (singular) and
+# A.augmentations.pad_with_params; albumentations>=1.4.18 / 2.x break these.
+albumentations==1.3.1
 
 # Core dependencies
 torch>=2.0.0

@@ -1,0 +1,13 @@
+.git
+.venv
+.venv-*/
+**/__pycache__/
+*.pyc
+output/
+*.log
+.env
+data/
+*.md
+!README.md
+COMPARISON.md
+output_smoke*

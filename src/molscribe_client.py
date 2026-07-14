@@ -37,6 +37,25 @@ class MolScribeClient:
             logger.info("MolScribe using device: %s", self._device)
         return self._device
 
+    @staticmethod
+    def _patch_swin_aliases() -> None:
+        """Map MolScribe's short encoder name onto the fork's full Swin configs.
+
+        breadbread1984/MolScribe defaults to ``encoder=swin_base`` (input 384),
+        but its ``create_swin_model`` only registers timm-style full names.
+        """
+        from molscribe.transformer import swin_transformer as st
+
+        aliases = {
+            "swin_base": "swin_base_patch4_window12_384",
+            "swin_large": "swin_large_patch4_window12_384",
+            "swin_small": "swin_small_patch4_window7_224",
+            "swin_tiny": "swin_tiny_patch4_window7_224",
+        }
+        for short, full in aliases.items():
+            if short not in st._swin_configs and full in st._swin_configs:
+                st._swin_configs[short] = st._swin_configs[full]
+
     def _load_model(self):
         """Lazy-load the MolScribe model (downloads checkpoint on first call)."""
         if self._model is not None:
@@ -54,6 +73,8 @@ class MolScribeClient:
 
         # Import here to avoid import errors when MolScribe is not yet installed
         from molscribe import MolScribe
+
+        self._patch_swin_aliases()
 
         logger.info("Loading MolScribe model onto %s ...", self.device)
         self._model = MolScribe(ckpt_path, device=self.device)

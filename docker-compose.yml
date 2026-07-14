@@ -1,0 +1,29 @@
+services:
+  document-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # CPU torch wheels (default). For NVIDIA GPU builds see docker-compose.gpu.yml
+        TORCH_INDEX: https://download.pytorch.org/whl/cpu
+    image: ailsynbio/document-parser:local
+    container_name: document-parser
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      DATA_DIR: /data
+      MINERU_VENV: /opt/venvs/mineru
+      MOLSCRIBE_VENV: /opt/venvs/molscribe
+      MINERU_BACKEND: ${MINERU_BACKEND:-pipeline}
+      MINERU_METHOD: ${MINERU_METHOD:-ocr}
+      MINERU_TIMEOUT: ${MINERU_TIMEOUT:-3600}
+      MOLSCRIBE_DEVICE: ${MOLSCRIBE_DEVICE:-cpu}
+      MOLSCRIBE_CONFIDENCE: ${MOLSCRIBE_CONFIDENCE:-0.5}
+      HF_HOME: /data/cache/huggingface
+      MINERU_MODEL_SOURCE: ${MINERU_MODEL_SOURCE:-huggingface}
+    volumes:
+      - parser_data:/data
+    restart: unless-stopped
+
+volumes:
+  parser_data:

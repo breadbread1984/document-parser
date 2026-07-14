@@ -1,0 +1,15 @@
+# Usage: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+services:
+  document-parser:
+    build:
+      args:
+        TORCH_INDEX: https://download.pytorch.org/whl/cu124
+    environment:
+      MOLSCRIBE_DEVICE: cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

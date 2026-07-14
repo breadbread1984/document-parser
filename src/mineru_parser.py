@@ -10,6 +10,7 @@ import logging
 import subprocess
 import shutil
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -33,9 +34,14 @@ class MinerUParser:
     def __init__(self, config: ParserConfig):
         self.config = config
 
-    def _check_mineru_installed(self) -> bool:
-        """Verify that the 'mineru' command is available."""
-        return shutil.which("mineru") is not None
+    def _resolve_mineru_bin(self) -> Optional[str]:
+        """Locate the mineru CLI next to the active interpreter, then PATH."""
+        scripts_dir = Path(sys.executable).resolve().parent
+        for name in ("mineru.exe", "mineru"):
+            candidate = scripts_dir / name
+            if candidate.is_file():
+                return str(candidate)
+        return shutil.which("mineru")
 
     def parse(self, pdf_path: Path, output_dir: Path, timeout: int = 3600) -> Path:
         """
@@ -53,7 +59,8 @@ class MinerUParser:
         Raises:
             RuntimeError: If MinerU is not installed or parsing fails.
         """
-        if not self._check_mineru_installed():
+        mineru_bin = self._resolve_mineru_bin()
+        if not mineru_bin:
             raise RuntimeError(
                 "MinerU CLI ('mineru') not found. "
                 "Install it with: pip install 'mineru[all]'"
@@ -64,16 +71,15 @@ class MinerUParser:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Base command
+        # MinerU 3.x uses -m/--method [auto|txt|ocr] (not --enable-ocr).
+        method = "ocr" if self.config.mineru_enable_ocr else "auto"
         cmd = [
-            "mineru",
+            mineru_bin,
             "-p", str(pdf_path),
             "-o", str(output_dir),
             "-b", self.config.mineru_backend,
+            "-m", method,
         ]
-
-        if self.config.mineru_enable_ocr:
-            cmd.extend(["--enable-ocr", "true"])
 
         # ---- VLLM backend: inject vLLM-specific args & env vars ----
         env = os.environ.copy()
@@ -141,6 +147,7 @@ class MinerUParser:
         # Determine the output markdown path.
         # MinerU writes: <output_dir>/<basename>/<basename>.md
         # or (for single files): <output_dir>/<basename>.md
+        # Newer layouts: <output_dir>/<basename>/{auto,ocr,txt}/.../*.md
         md_path = self._find_markdown(output_dir, pdf_path)
 
         if md_path is None:
@@ -155,18 +162,23 @@ class MinerUParser:
         """Locate the generated Markdown file in MinerU's output directory."""
         basename = pdf_path.stem
 
-        # Check common output patterns
+        # Check common output patterns (prefer non-_final.md intermediates)
         candidates = [
             output_dir / f"{basename}.md",
             output_dir / basename / f"{basename}.md",
+            output_dir / basename / "ocr" / f"{basename}.md",
+            output_dir / basename / "auto" / f"{basename}.md",
+            output_dir / basename / "txt" / f"{basename}.md",
         ]
 
         for candidate in candidates:
             if candidate.exists():
                 return candidate
 
-        # Fallback: search recursively
-        for md_file in output_dir.rglob("*.md"):
+        # Fallback: search recursively, skip our own final markdown
+        for md_file in sorted(output_dir.rglob("*.md")):
+            if md_file.name.endswith("_final.md"):
+                continue
             return md_file
 
         return None
