@@ -6,7 +6,39 @@
 
 ---
 
-## 使用方法
+## 使用方法（请按顺序做）
+
+### 0. 先看清：哪个才是正确结果？
+
+| 对 / 错 | 文件或内容 | 说明 |
+|---------|------------|------|
+| 正确 | 接口下载的 `*_final.md`，或任务目录里的 `result.md` | 结构式已尽量换成 SMILES |
+| 错误 | MinerU 目录下的 `input.md` / `*.md` | 只是 OCR 中间稿，结构式仍是图片 |
+| 错误 | 打开后只有一行 `{"detail":"Not Found"}` | **不是结果**，是下载 URL 写错或任务不存在 |
+| 错误 | 全文大量 `![](images/xxxx.jpg)`、几乎没有反引号 SMILES | 多半打开了中间稿，或任务未完成就拷贝了文件 |
+
+**如何一眼判断打开对了：**
+
+- 搜 `(a)` 或 `cyclo[` 附近：应看到类似  
+  `` `CC(C)C[C@@H]1NC(=O)...` ``  
+  （反引号包着的 SMILES）
+- 若仍是 `![](images/d37fce3e....jpg)`，说明看错文件了
+
+**唯一推荐的下载地址（务必用这个）：**
+
+```text
+GET http://<主机>:8000/v1/jobs/<job_id>/markdown
+```
+
+兼容别名（效果相同）：
+
+```text
+GET http://<主机>:8000/v1/jobs/<job_id>/result.md
+```
+
+不要发明其它路径。不要把服务器磁盘上的路径直接拼进 URL。
+
+---
 
 ### 1. 启动服务
 
@@ -20,9 +52,7 @@ docker compose up --build -d
 docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build -d
 ```
 
-**方式 B：本机 Windows（当前联调方式）**
-
-先准备好 API 环境（`.venvs\api`）以及带 MinerU/MolScribe 的环境（可用已有 `.venv`）：
+**方式 B：本机 Windows（联调）**
 
 ```powershell
 cd D:\CODE\Workspace\python\BIO\document-parser
@@ -49,108 +79,163 @@ export MOLSCRIBE_VENV="$PWD/.venvs/molscribe"
 .venvs/api/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-启动成功后：
+启动成功后先自检：
+
+```bash
+curl http://127.0.0.1:8000/health
+# 期望：{"status":"ok", ...}
+```
 
 | 地址 | 说明 |
 |------|------|
-| http://127.0.0.1:8000/docs | Swagger 交互文档（可直接上传 PDF） |
-| http://127.0.0.1:8000/health | 健康检查，返回 `{"status":"ok",...}` |
+| http://127.0.0.1:8000/docs | Swagger 页面，可点按钮上传/下载（不容易写错 URL） |
+| http://127.0.0.1:8000/health | 健康检查 |
 
-### 2. 处理一份 PDF（三步）
+---
 
-任务是异步的：上传后立刻返回 `job_id`，处理完再下载。
+### 2. 处理一份 PDF（必须三步）
 
-#### 步骤 ① 上传
+任务是**异步**的：上传后立刻返回 `job_id`，**等 status=done 再下载**。
+
+#### 步骤 ① 上传，记下 job_id
 
 ```bash
 curl -F "file=@你的专利.pdf" http://127.0.0.1:8000/v1/jobs
 ```
 
-返回示例：
+返回示例（请复制其中的 `job_id`）：
 
 ```json
 {
-  "job_id": "23e25fb7cdbd4f97affb5f4739103b7e",
+  "job_id": "098b1a165300472790eb80a1991f469c",
   "status": "queued",
-  "message": "Job accepted. Poll GET /v1/jobs/{job_id}; download GET /v1/jobs/{job_id}/markdown when done."
+  "message": "..."
 }
 ```
 
-PowerShell：
-
-```powershell
-curl.exe -F "file=@C:\path\to\patent.pdf" http://127.0.0.1:8000/v1/jobs
-```
-
-#### 步骤 ② 查询状态
-
-把上面的 `job_id` 替换进去：
+#### 步骤 ② 查询状态，直到 done
 
 ```bash
-curl http://127.0.0.1:8000/v1/jobs/<job_id>
+curl http://127.0.0.1:8000/v1/jobs/098b1a165300472790eb80a1991f469c
 ```
 
-状态含义：
+| status | 含义 | 能否下载 |
+|--------|------|----------|
+| `queued` | 排队中 | 否 |
+| `running` | OCR / MolScribe 进行中（大 PDF 可能要数分钟） | 否 |
+| `done` | 完成 | **可以** |
+| `failed` | 失败，看 `error` 字段 | 否 |
 
-| status | 含义 |
-|--------|------|
-| `queued` | 已排队 |
-| `running` | 正在 OCR / 识别结构式 |
-| `done` | 完成，可下载 |
-| `failed` | 失败，看返回里的 `error` 字段 |
+`done` 时响应里会有：
 
-`done` 时还会带 `stats`（如图片数、SMILES 替换数）和 `result_url`。
+- `result_url`：例如 `/v1/jobs/<job_id>/markdown`（相对路径，前面加主机即可）
+- `stats.smiles_replaced`：成功替换成 SMILES 的图片数量
 
-#### 步骤 ③ 下载 Markdown
-
-仅当 `status=done`：
+也可以用循环等待（Linux / macOS）：
 
 ```bash
-# 正确（推荐）
-curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/markdown
-
-# 下面这个路径也可以（兼容别名），不要拼成别的后缀
-curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/result.md
+JOB=098b1a165300472790eb80a1991f469c
+while true; do
+  ST=$(curl -s http://127.0.0.1:8000/v1/jobs/$JOB | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
+  echo "status=$ST"
+  [ "$ST" = "done" ] || [ "$ST" = "failed" ] && break
+  sleep 20
+done
 ```
 
-保存下来的文件名一般是 `原名_final.md`（由响应头 `Content-Disposition` 决定）。
+#### 步骤 ③ 用正确 URL 下载
 
-若打开后只有一行 `{"detail":"Not Found"}`，说明 **URL 写错或 job_id 不存在**，并不是真正的结果文件。请先：
+**推荐（请原样复制，只改 job_id）：**
 
 ```bash
-curl http://127.0.0.1:8000/v1/jobs/<job_id>
+curl -OJ http://127.0.0.1:8000/v1/jobs/098b1a165300472790eb80a1991f469c/markdown
 ```
 
-确认 `status` 为 `done` 后再下载。
+兼容写法（效果相同）：
 
-### 3. 接口一览
+```bash
+curl -OJ http://127.0.0.1:8000/v1/jobs/098b1a165300472790eb80a1991f469c/result.md
+```
+
+本地一般会得到类似 `WO2025050169A1_final.md` 的文件（由响应头文件名决定）。
+
+**服务器磁盘上的等价文件（若你有机器权限）：**
+
+```text
+$DATA_DIR/jobs/<job_id>/result.md
+```
+
+Compose 默认数据卷对应容器内 `/data/jobs/<job_id>/result.md`。
+
+**不要打开：**
+
+```text
+$DATA_DIR/jobs/<job_id>/work/mineru/**/*.md    ← 中间稿
+```
+
+---
+
+### 3. 常见踩坑（同事服务器上真实发生过）
+
+#### 坑 A：下载下来只有 `{"detail":"Not Found"}`
+
+原因：URL 写错，或 job_id 不存在。curl `-OJ` 仍会把 404 JSON 存成 `result.md`，看起来像“下好了”，其实只有约 **22 字节**。
+
+处理：
+
+1. 先 `curl http://127.0.0.1:8000/v1/jobs/<job_id>`，确认存在且 `status=done`
+2. 再用 **`.../markdown`** 下载（见上文）
+3. 检查文件大小：正常专利结果通常是 **几十～几百 KB**；只有几十字节几乎肯定是错误响应
+
+#### 坑 B：Markdown 里结构式还是图片，没有 SMILES
+
+可能原因：
+
+1. 打开了 MinerU 中间稿（`work/mineru/...`），不是 `result.md` / `*_final.md`
+2. 任务还在 `running` 就拷贝了中间文件
+3. 该图置信度低于阈值（默认 `MOLSCRIBE_CONFIDENCE=0.5`），会故意保留原图；看 `stats.smiles_replaced` 是否 > 0
+
+#### 坑 C：不想记 URL → 用浏览器
+
+打开 http://127.0.0.1:8000/docs → `POST /v1/jobs` 上传 → `GET /v1/jobs/{job_id}` 看状态 → `GET /v1/jobs/{job_id}/markdown` 下载。
+
+---
+
+### 4. 接口一览
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/health` | 存活检查 |
-| `POST` | `/v1/jobs` | 上传 PDF（`multipart/form-data`，字段名 `file`） |
-| `GET` | `/v1/jobs/{id}` | 查状态 / 统计 / 错误 |
-| `GET` | `/v1/jobs/{id}/markdown` | 下载结果 Markdown（推荐） |
-| `GET` | `/v1/jobs/{id}/result.md` | 同上（兼容别名） |
-| `GET` | `/v1/jobs/{id}/images/{name}` | 可选：下载结果中保留的图片 |
+| `POST` | `/v1/jobs` | 上传 PDF（字段名必须是 `file`） |
+| `GET` | `/v1/jobs/{id}` | 查状态；`done` 时看 `result_url` / `stats` |
+| `GET` | `/v1/jobs/{id}/markdown` | **下载结果（推荐）** |
+| `GET` | `/v1/jobs/{id}/result.md` | 下载结果（兼容别名，内容相同） |
+| `GET` | `/v1/jobs/{id}/images/{name}` | 可选：下载仍保留的图片 |
 
-同一时间默认只跑 **1** 个任务（避免 GPU/CPU 抢占）。也可用浏览器打开 `/docs` 点「Try it out」完成上传与下载。
+同一时间默认只跑 **1** 个任务。
 
-### 4. 完整示例（WO2025050169A1）
+---
+
+### 5. 一条龙示例
 
 ```bash
-# 上传
-curl -F "file=@WO2025050169A1.pdf" http://127.0.0.1:8000/v1/jobs
-# → job_id=...
+# 1) 上传
+RESP=$(curl -s -F "file=@WO2025050169A1.pdf" http://127.0.0.1:8000/v1/jobs)
+echo "$RESP"
+JOB=$(echo "$RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
 
-# 轮询直到 done（大专利大约数分钟）
-curl http://127.0.0.1:8000/v1/jobs/<job_id>
+# 2) 等到 done
+curl -s http://127.0.0.1:8000/v1/jobs/$JOB
+# 直到 "status":"done"
 
-# 下载
-curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/markdown
+# 3) 下载（注意是 /markdown）
+curl -OJ http://127.0.0.1:8000/v1/jobs/$JOB/markdown
+
+# 4) 抽查：应能搜到反引号 SMILES
+grep -n 'CC(C)' ./*_final.md | head
 ```
 
-本机实测：约 **5.5 分钟**，59 张图中 **42** 张替换为 SMILES。
+本机实测（WO2025050169A1）：约 **5.5 分钟**，59 张图中 **42** 张替换为 SMILES。
 
 ---
 
@@ -163,7 +248,7 @@ curl -OJ http://127.0.0.1:8000/v1/jobs/<job_id>/markdown
   → API 进程（FastAPI，很轻）
   → 子进程调用 MinerU 环境（OCR）
   → 子进程调用 MolScribe 环境（结构式 → SMILES）
-  → 下载 Markdown
+  → 下载 Markdown（/v1/jobs/{id}/markdown）
 ```
 
 | 环境 | 职责 |

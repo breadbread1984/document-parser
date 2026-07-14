@@ -122,7 +122,13 @@ async def submit_job(
     return JobCreated(
         job_id=job_id,
         status=JobStatus.queued.value,
-        message="Job accepted. Poll GET /v1/jobs/{job_id}; download GET /v1/jobs/{job_id}/markdown when done.",
+        message=(
+            "Job accepted. "
+            "1) Poll GET /v1/jobs/{job_id} until status=done. "
+            "2) Download GET /v1/jobs/{job_id}/markdown "
+            "(alias: /v1/jobs/{job_id}/result.md). "
+            "If the saved file is only {\"detail\":\"Not Found\"}, the URL was wrong."
+        ),
     )
 
 
