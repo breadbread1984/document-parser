@@ -94,19 +94,18 @@ class MinerUParser:
                     )
                     cmd.extend(vllm_args)
             else:
-                # HTTP-client mode: pass server_url and server_headers.
+                # HTTP-client mode: pass endpoint URL (required) and authentication headers.
                 # MinerU's HTTP-client backend authenticates via --server_headers,
                 # NOT via --api-key or OPENAI_API_KEY.
-                # See: https://opendatalab.github.io/MinerU/
                 if vllm.endpoint:
-                    cmd.extend(["--server_url", vllm.endpoint])
+                    cmd.extend(["-u", vllm.endpoint])
                     logger.info(
-                        "vLLM HTTP-client backend detected. Server URL: %s",
+                        "vLLM HTTP-client backend detected. Endpoint: %s",
                         vllm.endpoint,
                     )
                 else:
                     logger.warning(
-                        "HTTP-client backend '%s' used but no server_url provided. "
+                        "HTTP-client backend '%s' used but no endpoint (-u) provided. "
                         "MinerU will attempt to connect to http://127.0.0.1:30000 by default.",
                         self.config.mineru_backend,
                     )
