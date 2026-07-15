@@ -174,6 +174,29 @@ def download_markdown(job_id: str) -> FileResponse:
     )
 
 
+@app.get("/v1/jobs/{job_id}/debug/predictions")
+def debug_predictions(job_id: str) -> dict:
+    """Diagnostic: return the raw MolScribe predictions JSON (errors only)."""
+    import json
+
+    meta = read_meta(job_id)
+    if not meta:
+        raise HTTPException(status_code=404, detail="Job not found")
+    pred_path = job_dir(job_id) / "work" / "molscribe_predictions.json"
+    if not pred_path.is_file():
+        return {"error": "predictions file not found", "path": str(pred_path)}
+    data = json.loads(pred_path.read_text(encoding="utf-8"))
+    # Return only errored entries to keep response compact
+    errors = [e for e in data if e.get("error")]
+    ok = len(data) - len(errors)
+    return {
+        "total": len(data),
+        "errors": len(errors),
+        "ok": ok,
+        "error_samples": errors[:10],
+    }
+
+
 @app.get("/v1/jobs/{job_id}/images/{image_name}")
 def download_image(job_id: str, image_name: str) -> FileResponse:
     """Optional: fetch a kept original image referenced from the markdown."""
