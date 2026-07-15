@@ -3,7 +3,7 @@ services:
   document-parser:
     build:
       args:
-        TORCH_INDEX: https://download.pytorch.org/whl/cu128
+        TORCH_INDEX: https://download.pytorch.org/whl/cu132
     environment:
       MOLSCRIBE_DEVICE: cuda
     deploy:
